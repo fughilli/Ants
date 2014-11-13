@@ -113,6 +113,7 @@ dir_t chooseRandomDirection(dir_t dirMask);
 void updateGrid(aaGrid* gridp);
 dir_t getDirBiasMask(uint8_t bias);
 void SDLDisplayGrid(aaGrid* gridp);
+dir_t chooseWeightedRandomDirection(aaGrid* gridp, gridPoint pt, dir_t dirMask);
 
 #ifdef USE_SDL
 int main(int argc, char* argv[])
@@ -120,7 +121,7 @@ int main(int argc, char* argv[])
 int main(void)
 #endif
 {
-    int gridWidth = 600, gridHeight = 600;
+    int gridWidth = 200, gridHeight = 200;
     aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
     grid.grid = gridcells;
@@ -142,9 +143,25 @@ int main(void)
 
     //getCell(&grid, {2,2})->parts.hasAnt = 1;
 
-    for(int i = (gridWidth/2 - 30); i < (gridWidth/2 + 30); i++)
-        for(int j = (gridHeight/2 - 30); j < (gridHeight/2 + 30); j++)
-            getCell(&grid, {i,j})->parts.hasAnt = 1;
+    for(int i = (3*gridWidth/4); i < (3*gridWidth/4 + 20); i++)
+        for(int j = (3*gridWidth/4); j < (3*gridWidth/4 + 20); j++)
+        {
+            aaCell* antCell = getCell(&grid, {i,j});
+            antCell->parts.hasAnt = 1;
+            antCell->parts.antState |= ANT_SEARCH;
+        }
+
+
+    getCell(&grid, {3*gridWidth/4,3*gridWidth/4 + 2})->parts.isNest = 1;
+    getCell(&grid, {3*gridWidth/4,3*gridWidth/4})->parts.isNest = 1;
+    getCell(&grid, {3*gridWidth/4 + 2,3*gridWidth/4})->parts.isNest = 1;
+    getCell(&grid, {3*gridWidth/4 + 2,3*gridWidth/4 + 2})->parts.isNest = 1;
+
+    getCell(&grid, {4,4})->parts.isFood = 1;
+    getCell(&grid, {6,4})->parts.isFood = 1;
+    getCell(&grid, {6,6})->parts.isFood = 1;
+    getCell(&grid, {4,6})->parts.isFood = 1;
+
     bool update = false;
     while(true)
     {
@@ -353,6 +370,37 @@ dir_t chooseRandomDirection(dir_t dirMask)
     return 1<<(sbit-1);
 }
 
+uint8_t weightBins[8];
+
+dir_t chooseWeightedRandomDirection(aaGrid* gridp, gridPoint pt, dir_t dirMask)
+{
+    if(dirMask == 0)
+        return 0;
+
+    uint16_t totalWeight = 0;
+    for(uint8_t i = 0; i < 8; i++)
+    {
+        if(dirMask & (1 << i))
+        {
+            weightBins[i] = getCellRelative(gridp, pt, (1 << i))->parts.pheromoneStrength;
+            if(weightBins[i] == 0)
+                weightBins[i] = 1;
+        }
+        else
+        {
+            weightBins[i] = 0;
+        }
+        totalWeight += weightBins[i];
+    }
+    int16_t randSelection = rand()%totalWeight;
+    uint8_t selection = 0;
+    while(randSelection >= 0)
+    {
+        randSelection -= weightBins[selection++];
+    }
+    return 1<<(selection-1);
+}
+
 dir_t getDirBiasMask(uint8_t bias)
 {
     if(bias == ANT_BIAS_NONE)
@@ -437,13 +485,26 @@ void processCell(aaGrid* gridp, gridPoint pt)
         // Mask the valid neighbors by the bias mask
         validNeighbors &= biasMask;
         // Choose a random move direction
-        dir_t moveDir = chooseRandomDirection(validNeighbors);
+        dir_t moveDir;
+        if(currentCell->parts.antState & ANT_SEARCH)
+        {
+            moveDir = chooseRandomDirection(validNeighbors);
+        }
+        else
+        {
+            moveDir = chooseWeightedRandomDirection(gridp, pt, validNeighbors);
+        }
         if(moveDir)
         {
             aaCell* targetCell = getCellRelative(gridp, pt, moveDir);
             targetCell->parts.hasAnt = 1;
             targetCell->parts.antState = currentCell->parts.antState | ANT_ACTED;
             targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
+
+            if(targetCell->parts.isFood)
+                targetCell->parts.antState &= ~ANT_SEARCH;
+            if(targetCell->parts.isNest)
+                targetCell->parts.antState |= ANT_SEARCH;
 
             currentCell->parts.antBias = 0;
             currentCell->parts.antState = 0;

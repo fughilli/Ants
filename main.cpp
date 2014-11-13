@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#define USE_SDL
+//#define USE_SDL
 
 #ifdef USE_SDL
 #include <SDL2/SDL.h>
@@ -111,7 +111,7 @@ aaCell* getCellRelative(aaGrid* gridp, gridPoint pt, dir_t dir);
 dir_t getValidNeighbors(aaGrid* gridp, gridPoint pt);
 dir_t chooseRandomDirection(dir_t dirMask);
 void updateGrid(aaGrid* gridp);
-dir_t getDirBiasMask(ant_bias_e bias);
+dir_t getDirBiasMask(uint8_t bias);
 void SDLDisplayGrid(aaGrid* gridp);
 
 #ifdef USE_SDL
@@ -120,12 +120,21 @@ int main(int argc, char* argv[])
 int main(void)
 #endif
 {
-    int gridWidth = 600, gridHeight = 600;
+    int gridWidth = 30, gridHeight = 30;
     aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
     grid.grid = gridcells;
     grid.aaProps.width = gridWidth;
     grid.aaProps.height = gridHeight;
+
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_N));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_NE));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_E));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_SE));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_S));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_SW));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_W));
+    printf("%02x\n", getDirBiasMask(ANT_BIAS_NW));
 
 #ifdef USE_SDL
     //---------------SDL STUFF--------------------
@@ -142,8 +151,8 @@ int main(void)
 
     //getCell(&grid, {2,2})->parts.hasAnt = 1;
 
-    for(int i = (gridWidth/2 - 100); i < (gridWidth/2 + 100); i++)
-        for(int j = (gridHeight/2 - 100); j < (gridHeight/2 + 100); j++)
+    for(int i = (gridWidth/2 - 3); i < (gridWidth/2 + 3); i++)
+        for(int j = (gridHeight/2 - 3); j < (gridHeight/2 + 3); j++)
             getCell(&grid, {i,j})->parts.hasAnt = 1;
     bool update = false;
     while(true)
@@ -153,10 +162,10 @@ int main(void)
         //if(update)
         //{
 
-            SDL_LockSurface(surface);
-            SDLDisplayGrid(&grid);
-            SDL_UnlockSurface(surface);
-            updateGrid(&grid);
+        SDL_LockSurface(surface);
+        SDLDisplayGrid(&grid);
+        SDL_UnlockSurface(surface);
+        updateGrid(&grid);
 
         //    update = false;
         //}
@@ -176,7 +185,7 @@ int main(void)
         SDL_UpdateWindowSurface(window);
 #else
         printGrid(&grid);
-        //updateGrid(&grid);
+        updateGrid(&grid);
         getc(stdin);
 #endif
     }
@@ -359,18 +368,41 @@ dir_t getDirBiasMask(uint8_t bias)
     // Rotate the buffer around an 8-bit block by (bias-1)
     tempMask <<= (bias - 1);
     tempMask |= ((tempMask & 0x3) << 8);
+    tempMask |= ((tempMask & 0xc0) >> 8);
     // shift, truncate, return
-    return (dir_t)(tempMask >>= 2);
+    return (dir_t)(tempMask >> 2);
 }
+
+uint8_t gridOrderCounter = 0;
 
 void updateGrid(aaGrid* gridp)
 {
     uint16_t i,j;
-    for(i = 0; i < gridp->aaProps.height; i++)
+    if(gridOrderCounter & 0x01)
     {
+        for(i = 0; i < gridp->aaProps.height; i++)
+        {
+            for(j = 0; j < gridp->aaProps.width; j++)
+            {
+                if(gridOrderCounter & 0x02)
+                    processCell(gridp, {j, i});
+                else
+                    processCell(gridp, {gridp->aaProps.width - 1 - j, gridp->aaProps.height - 1 - i});
+            }
+        }
+    }
+    else
+    {
+
         for(j = 0; j < gridp->aaProps.width; j++)
         {
-            processCell(gridp, {j, i});
+            for(i = 0; i < gridp->aaProps.height; i++)
+            {
+                if(gridOrderCounter & 0x02)
+                    processCell(gridp, {j, i});
+                else
+                    processCell(gridp, {gridp->aaProps.width - 1 - j, gridp->aaProps.height - 1 - i});
+            }
         }
     }
 
@@ -382,6 +414,8 @@ void updateGrid(aaGrid* gridp)
             getCell(gridp, {j, i})->parts.antState &= ~ANT_ACTED;
         }
     }
+
+    gridOrderCounter = (gridOrderCounter + 1) % 4;
 }
 
 uint8_t getLowestBitPos(uint32_t input)
@@ -402,9 +436,9 @@ void processCell(aaGrid* gridp, gridPoint pt)
         // Find valid neighbors
         dir_t validNeighbors = getValidNeighbors(gridp, pt);
         // Compute the bias mask based upon the last movement direction
-            //dir_t biasMask = getDirBiasMask(currentCell->parts.antBias);
+        //dir_t biasMask = getDirBiasMask(currentCell->parts.antBias);
         // Mask the valid neighbors by the bias mask
-            //validNeighbors &= biasMask;
+        //validNeighbors &= biasMask;
         // Choose a random move direction
         dir_t moveDir = chooseRandomDirection(validNeighbors);
         if(moveDir)
@@ -412,7 +446,7 @@ void processCell(aaGrid* gridp, gridPoint pt)
             aaCell* targetCell = getCellRelative(gridp, pt, moveDir);
             targetCell->parts.hasAnt = 1;
             targetCell->parts.antState = currentCell->parts.antState | ANT_ACTED;
-            //targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
+            targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
 
             currentCell->parts.antBias = 0;
             currentCell->parts.antState = 0;
@@ -421,7 +455,7 @@ void processCell(aaGrid* gridp, gridPoint pt)
         else
         {
             currentCell->parts.antState |= ANT_ACTED;
-            //currentCell->parts.antBias = 0;
+            currentCell->parts.antBias = 0;
         }
         //printf("Valid neighbors: %02x chosen: %02x\n", validNeighbors, moveDir);
     }

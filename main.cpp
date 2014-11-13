@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#include <SDL2/SDL.h>
+#include "SDL_DisplayInterface.h"
 
 #define CELL_N          0x01
 #define CELL_NE         0x02
@@ -17,15 +19,15 @@
 
 typedef enum
 {
-    ANT_BIAS_NONE,
-    ANT_BIAS_N,
-    ANT_BIAS_NE,
-    ANT_BIAS_E,
-    ANT_BIAS_SE,
-    ANT_BIAS_S,
-    ANT_BIAS_SW,
-    ANT_BIAS_W,
-    ANT_BIAS_NW
+    ANT_BIAS_NONE = 0,
+    ANT_BIAS_N = 1,
+    ANT_BIAS_NE = 2,
+    ANT_BIAS_E = 3,
+    ANT_BIAS_SE = 4,
+    ANT_BIAS_S = 5,
+    ANT_BIAS_SW = 6,
+    ANT_BIAS_W = 7,
+    ANT_BIAS_NW = 8
 } ant_bias_e;
 
 typedef union
@@ -34,21 +36,21 @@ typedef union
     struct
     {
         // Ant params
-        uint8_t hasAnt : 1;
-        uint8_t antState : 2;
-        ant_bias_e antBias : 4;
-        uint8_t : 1;
+        uint8_t hasAnt :                1;
+        uint8_t antState :              2;
+        uint8_t antBias :               4;
+        uint8_t :                       1;
 
         // Pheromone strength
-        uint8_t pheromoneStrength : 8;
+        uint8_t pheromoneStrength :     8;
 
         // Non-moving params
-        uint8_t isFood : 1;
-        uint8_t : 7;
+        uint8_t isFood :                1;
+        uint8_t :                       7;
 
-        uint8_t isWall : 1;
-        uint8_t isNest : 1;
-        uint8_t : 6;
+        uint8_t isWall :                1;
+        uint8_t isNest :                1;
+        uint8_t :                       6;
     } parts;
 } aaCell;
 
@@ -81,6 +83,13 @@ uint8_t bitcount (uint32_t n)
     return count;
 }
 
+//---------------SDL STUFF--------------------
+SDL_Surface * surface;
+SDL_Window * window;
+
+SDL_DisplayInterface* di;
+//---------------SDL STUFF--------------------
+
 void processCell(aaGrid* gridp, gridPoint pt);
 void setupGrid(aaGrid* gridp);
 void printGrid(aaGrid* gridp);
@@ -93,6 +102,11 @@ dir_t getDirBiasMask(ant_bias_e bias);
 
 int main(void)
 {
+    SDL_Init(SDL_INIT_EVERYTHING);
+
+    window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 400, 400, 0);
+    surface = SDL_GetWindowSurface(window);
+
     int gridWidth = 20, gridHeight = 20;
     aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
@@ -102,7 +116,11 @@ int main(void)
 
     setupGrid(&grid);
 
-    getCell(&grid, {2,2})->parts.hasAnt = 1;
+    //getCell(&grid, {2,2})->parts.hasAnt = 1;
+
+    for(int i = 5; i < 10; i++)
+        for(int j = 5; j < 10; j++)
+            getCell(&grid, {i,j})->parts.hasAnt = 1;
 
     while(true)
     {
@@ -248,10 +266,10 @@ dir_t chooseRandomDirection(dir_t dirMask)
     return 1<<(sbit-1);
 }
 
-dir_t getDirBiasMask(ant_bias_e bias)
+dir_t getDirBiasMask(uint8_t bias)
 {
     if(bias == ANT_BIAS_NONE)
-        return 0;
+        return 0xFF;
     // Create a buffer with 5 bits at the bottom
     uint16_t tempMask = 0x1F;
     // Rotate the buffer around an 8-bit block by (bias-1)
@@ -282,26 +300,46 @@ void updateGrid(aaGrid* gridp)
     }
 }
 
+uint8_t getLowestBitPos(uint32_t input)
+{
+    if(input == 0)
+        return 0xFF;
+    uint8_t pos = 0;
+    while(!(input & (1<<pos)))
+        pos++;
+    return pos;
+}
+
 void processCell(aaGrid* gridp, gridPoint pt)
 {
     aaCell* currentCell = getCell(gridp, pt);
     if(currentCell->parts.hasAnt && !(currentCell->parts.antState & ANT_ACTED))
     {
-        uint8_t validNeighbors = getValidNeighbors(gridp, pt);
-        uint8_t moveDir = chooseRandomDirection(validNeighbors);
+        // Find valid neighbors
+        dir_t validNeighbors = getValidNeighbors(gridp, pt);
+        // Compute the bias mask based upon the last movement direction
+        dir_t biasMask = getDirBiasMask(currentCell->parts.antBias);
+        // Mask the valid neighbors by the bias mask
+        validNeighbors &= biasMask;
+        // Choose a random move direction
+        dir_t moveDir = chooseRandomDirection(validNeighbors);
         if(moveDir)
         {
             aaCell* targetCell = getCellRelative(gridp, pt, moveDir);
             targetCell->parts.hasAnt = 1;
             targetCell->parts.antState = currentCell->parts.antState | ANT_ACTED;
+            targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
+
+            currentCell->parts.antBias = 0;
             currentCell->parts.antState = 0;
             currentCell->parts.hasAnt = 0;
         }
         else
         {
             currentCell->parts.antState |= ANT_ACTED;
+            currentCell->parts.antBias = 0;
         }
-        printf("Valid neighbors: %02x chosen: %02x\n", validNeighbors, moveDir);
+        //printf("Valid neighbors: %02x chosen: %02x\n", validNeighbors, moveDir);
     }
 }
 

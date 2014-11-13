@@ -2,8 +2,14 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+
+#define USE_SDL
+
+#ifdef USE_SDL
 #include <SDL2/SDL.h>
 #include "SDL_DisplayInterface.h"
+#endif
+
 
 #define CELL_N          0x01
 #define CELL_NE         0x02
@@ -41,16 +47,17 @@ typedef union
         uint8_t antBias :               4;
         uint8_t :                       1;
 
+        uint8_t targetDir :             8;
+
         // Pheromone strength
         uint8_t pheromoneStrength :     8;
 
         // Non-moving params
         uint8_t isFood :                1;
-        uint8_t :                       7;
-
         uint8_t isWall :                1;
         uint8_t isNest :                1;
-        uint8_t :                       6;
+        uint8_t :                       5;
+
     } parts;
 } aaCell;
 
@@ -83,12 +90,18 @@ uint8_t bitcount (uint32_t n)
     return count;
 }
 
+#ifdef USE_SDL
 //---------------SDL STUFF--------------------
+//vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 SDL_Surface * surface;
 SDL_Window * window;
 
-SDL_DisplayInterface* di;
+SDL_DisplayInterface di(&surface);
+
+SDL_Event gameEvent;
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 //---------------SDL STUFF--------------------
+#endif //USE_SDL
 
 void processCell(aaGrid* gridp, gridPoint pt);
 void setupGrid(aaGrid* gridp);
@@ -99,35 +112,85 @@ dir_t getValidNeighbors(aaGrid* gridp, gridPoint pt);
 dir_t chooseRandomDirection(dir_t dirMask);
 void updateGrid(aaGrid* gridp);
 dir_t getDirBiasMask(ant_bias_e bias);
+void SDLDisplayGrid(aaGrid* gridp);
 
+#ifdef USE_SDL
+int main(int argc, char* argv[])
+#else
 int main(void)
+#endif
 {
-    SDL_Init(SDL_INIT_EVERYTHING);
-
-    window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 400, 400, 0);
-    surface = SDL_GetWindowSurface(window);
-
-    int gridWidth = 20, gridHeight = 20;
+    int gridWidth = 600, gridHeight = 600;
     aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
     grid.grid = gridcells;
     grid.aaProps.width = gridWidth;
     grid.aaProps.height = gridHeight;
 
+#ifdef USE_SDL
+    //---------------SDL STUFF--------------------
+    //vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    SDL_Init(SDL_INIT_EVERYTHING);
+
+    window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, gridWidth, gridHeight, 0);
+    surface = SDL_GetWindowSurface(window);
+    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    //---------------SDL STUFF--------------------
+#endif //USE_SDL
+
     setupGrid(&grid);
 
     //getCell(&grid, {2,2})->parts.hasAnt = 1;
 
-    for(int i = 5; i < 10; i++)
-        for(int j = 5; j < 10; j++)
+    for(int i = (gridWidth/2 - 100); i < (gridWidth/2 + 100); i++)
+        for(int j = (gridHeight/2 - 100); j < (gridHeight/2 + 100); j++)
             getCell(&grid, {i,j})->parts.hasAnt = 1;
-
+    bool update = false;
     while(true)
     {
+#ifdef USE_SDL
+        SDL_PumpEvents();
+        //if(update)
+        //{
+
+            SDL_LockSurface(surface);
+            SDLDisplayGrid(&grid);
+            SDL_UnlockSurface(surface);
+            updateGrid(&grid);
+
+        //    update = false;
+        //}
+
+        if(SDL_PollEvent(&gameEvent))
+        {
+            if(gameEvent.type == SDL_QUIT)
+                break;
+            //if(gameEvent.type == SDL_KEYDOWN && gameEvent.key.keysym.scancode == SDL_SCANCODE_SPACE)
+            //    update = true;
+            //if(gameEvent.type == SDL_MOUSEMOTION)
+            //{
+            //    di.drawPoint(gameEvent.motion.x, gameEvent.motion.y, {0,0,0});
+            //}
+        }
+
+        SDL_UpdateWindowSurface(window);
+#else
         printGrid(&grid);
-        updateGrid(&grid);
+        //updateGrid(&grid);
         getc(stdin);
+#endif
     }
+
+#ifdef USE_SDL
+    //---------------SDL STUFF--------------------
+    //vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    SDL_FreeSurface(surface);
+
+    SDL_Quit();
+    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    //---------------SDL STUFF--------------------
+#endif //USE_SDL
+
     return 0;
 }
 
@@ -194,6 +257,27 @@ aaCell* getCellRelative(aaGrid* gridp, gridPoint pt, dir_t dir)
     }
     return NULL;
 }
+
+#ifdef USE_SDL
+void SDLDisplayGrid(aaGrid* gridp)
+{
+    uint16_t i, j;
+    for(i = 0; i < gridp->aaProps.height; i++)
+    {
+        for(j = 0; j < gridp->aaProps.width; j++)
+        {
+            if(gridp->grid[i*gridp->aaProps.width + j].parts.isWall)
+                di.drawPoint(j, i, {255,255,255});
+            else if(gridp->grid[i*gridp->aaProps.width + j].parts.isFood)
+                di.drawPoint(j, i, {0,0,255});
+            else if(gridp->grid[i*gridp->aaProps.width + j].parts.hasAnt)
+                di.drawPoint(j, i, {255,0,0});
+            else
+                di.drawPoint(j, i, {0,0,0});
+        }
+    }
+}
+#endif //USE_SDL
 
 void printGrid(aaGrid* gridp)
 {
@@ -318,9 +402,9 @@ void processCell(aaGrid* gridp, gridPoint pt)
         // Find valid neighbors
         dir_t validNeighbors = getValidNeighbors(gridp, pt);
         // Compute the bias mask based upon the last movement direction
-        dir_t biasMask = getDirBiasMask(currentCell->parts.antBias);
+            //dir_t biasMask = getDirBiasMask(currentCell->parts.antBias);
         // Mask the valid neighbors by the bias mask
-        validNeighbors &= biasMask;
+            //validNeighbors &= biasMask;
         // Choose a random move direction
         dir_t moveDir = chooseRandomDirection(validNeighbors);
         if(moveDir)
@@ -328,7 +412,7 @@ void processCell(aaGrid* gridp, gridPoint pt)
             aaCell* targetCell = getCellRelative(gridp, pt, moveDir);
             targetCell->parts.hasAnt = 1;
             targetCell->parts.antState = currentCell->parts.antState | ANT_ACTED;
-            targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
+            //targetCell->parts.antBias = (getLowestBitPos(moveDir)+1);
 
             currentCell->parts.antBias = 0;
             currentCell->parts.antState = 0;
@@ -337,7 +421,7 @@ void processCell(aaGrid* gridp, gridPoint pt)
         else
         {
             currentCell->parts.antState |= ANT_ACTED;
-            currentCell->parts.antBias = 0;
+            //currentCell->parts.antBias = 0;
         }
         //printf("Valid neighbors: %02x chosen: %02x\n", validNeighbors, moveDir);
     }

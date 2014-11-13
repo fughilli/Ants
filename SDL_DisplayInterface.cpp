@@ -19,9 +19,6 @@ SDL_DisplayInterface::SDL_DisplayInterface(SDL_Surface ** surface)
 
 void SDL_DisplayInterface::drawPoint(int16_t x, int16_t y, const G3D_Color& color)
 {
-    x += (*dispSurface)->w / 2;
-    y += (*dispSurface)->h / 2;
-
     if(x >= 0 && x < (*dispSurface)->w && y >= 0 && y < (*dispSurface)->h)
     {
         uint32_t index = (*dispSurface)->w * y + x;

@@ -114,6 +114,7 @@ void updateGrid(aaGrid* gridp);
 dir_t getDirBiasMask(uint8_t bias);
 void SDLDisplayGrid(aaGrid* gridp);
 dir_t chooseWeightedRandomDirection(aaGrid* gridp, gridPoint pt, dir_t dirMask);
+void paintRegion(aaGrid* gridp, aaCell cell, gridPoint ptA, gridPoint ptB);
 
 #ifdef USE_SDL
 int main(int argc, char* argv[])
@@ -121,7 +122,10 @@ int main(int argc, char* argv[])
 int main(void)
 #endif
 {
-    int gridWidth = 200, gridHeight = 200;
+    int gridWidth = 100, gridHeight = 100;
+
+    int antBlockSize = 5;
+    int foodBlockSize = 10;
     aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
     grid.grid = gridcells;
@@ -133,7 +137,7 @@ int main(void)
     //vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
     SDL_Init(SDL_INIT_EVERYTHING);
 
-    window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, gridWidth, gridHeight, 0);
+    window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, gridWidth, gridHeight, SDL_WINDOW_FULLSCREEN);
     surface = SDL_GetWindowSurface(window);
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     //---------------SDL STUFF--------------------
@@ -143,24 +147,24 @@ int main(void)
 
     //getCell(&grid, {2,2})->parts.hasAnt = 1;
 
-    for(int i = (3*gridWidth/4); i < (3*gridWidth/4 + 20); i++)
-        for(int j = (3*gridWidth/4); j < (3*gridWidth/4 + 20); j++)
-        {
-            aaCell* antCell = getCell(&grid, {i,j});
-            antCell->parts.hasAnt = 1;
-            antCell->parts.antState |= ANT_SEARCH;
-        }
 
+    aaCell antCell, foodCell;
 
-    getCell(&grid, {3*gridWidth/4,3*gridWidth/4 + 2})->parts.isNest = 1;
-    getCell(&grid, {3*gridWidth/4,3*gridWidth/4})->parts.isNest = 1;
-    getCell(&grid, {3*gridWidth/4 + 2,3*gridWidth/4})->parts.isNest = 1;
-    getCell(&grid, {3*gridWidth/4 + 2,3*gridWidth/4 + 2})->parts.isNest = 1;
+    antCell.raw = 0;
+    antCell.parts.hasAnt = 1;
+    antCell.parts.antState |= ANT_SEARCH;
+    antCell.parts.isNest = 1;
 
-    getCell(&grid, {4,4})->parts.isFood = 1;
-    getCell(&grid, {6,4})->parts.isFood = 1;
-    getCell(&grid, {6,6})->parts.isFood = 1;
-    getCell(&grid, {4,6})->parts.isFood = 1;
+    foodCell.raw = 0;
+    foodCell.parts.isFood = 1;
+
+    paintRegion(&grid, antCell,
+    {grid.aaProps.width - antBlockSize - 1, grid.aaProps.height - antBlockSize - 1},
+    {grid.aaProps.width - 2, grid.aaProps.height - 2});
+
+    paintRegion(&grid, foodCell,
+    {1, 1},
+    {1+foodBlockSize, 1+foodBlockSize});
 
     bool update = false;
     while(true)
@@ -182,8 +186,8 @@ int main(void)
         {
             if(gameEvent.type == SDL_QUIT)
                 break;
-            //if(gameEvent.type == SDL_KEYDOWN && gameEvent.key.keysym.scancode == SDL_SCANCODE_SPACE)
-            //    update = true;
+            if(gameEvent.type == SDL_KEYDOWN && gameEvent.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+                break;
             //if(gameEvent.type == SDL_MOUSEMOTION)
             //{
             //    di.drawPoint(gameEvent.motion.x, gameEvent.motion.y, {0,0,0});
@@ -209,6 +213,23 @@ int main(void)
 #endif //USE_SDL
 
     return 0;
+}
+
+bool checkBounds(aaGrid* gridp, gridPoint pt)
+{
+    return (pt.x >= 0 && pt.y >= 0 && pt.x < gridp->aaProps.width && pt.y < gridp->aaProps.height);
+}
+
+void paintRegion(aaGrid* gridp, aaCell cell, gridPoint ptA, gridPoint ptB)
+{
+    if(!checkBounds(gridp, ptA) || !checkBounds(gridp, ptB))
+        return;
+    int32_t i, j;
+    for(i = ptA.x; i < ptB.x; i++)
+        for(j = ptA.y; j < ptB.y; j++)
+        {
+            getCell(gridp, {i, j})->raw = cell.raw;
+        }
 }
 
 /**
@@ -290,6 +311,8 @@ void SDLDisplayGrid(aaGrid* gridp)
                 di.drawPoint(j, i, {0,0,255});
             else if(currentCell->parts.hasAnt)
                 di.drawPoint(j, i, {255,0,0});
+            else if(currentCell->parts.isNest)
+                di.drawPoint(j, i, {0,255,0});
             else if(currentCell->parts.pheromoneStrength)
                 di.drawPoint(j, i, {currentCell->parts.pheromoneStrength, 0, currentCell->parts.pheromoneStrength});
             else
@@ -488,7 +511,10 @@ void processCell(aaGrid* gridp, gridPoint pt)
         dir_t moveDir;
         if(currentCell->parts.antState & ANT_SEARCH)
         {
-            moveDir = chooseRandomDirection(validNeighbors);
+            //if(rand() % 2)
+                moveDir = chooseRandomDirection(validNeighbors);
+//            else
+//                moveDir = chooseWeightedRandomDirection(gridp, pt, validNeighbors);
         }
         else
         {
@@ -511,7 +537,7 @@ void processCell(aaGrid* gridp, gridPoint pt)
             currentCell->parts.hasAnt = 0;
 
             uint16_t newPStrength = currentCell->parts.pheromoneStrength;
-            newPStrength += 50;
+            newPStrength += 100;
             currentCell->parts.pheromoneStrength = (newPStrength > 255)?255:newPStrength;
         }
         else

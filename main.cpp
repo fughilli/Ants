@@ -3,41 +3,70 @@
 #include <stdint.h>
 #include <time.h>
 
-#define CELL_N      0x01
-#define CELL_NE     0x02
-#define CELL_E      0x04
-#define CELL_SE     0x08
-#define CELL_S      0x10
-#define CELL_SW     0x20
-#define CELL_W      0x40
-#define CELL_NW     0x80
+#define CELL_N          0x01
+#define CELL_NE         0x02
+#define CELL_E          0x04
+#define CELL_SE         0x08
+#define CELL_S          0x10
+#define CELL_SW         0x20
+#define CELL_W          0x40
+#define CELL_NW         0x80
+
+#define ANT_SEARCH      0x01    // Vs. returning to home
+#define ANT_ACTED       0x02
+
+typedef enum
+{
+    ANT_BIAS_NONE,
+    ANT_BIAS_N,
+    ANT_BIAS_NE,
+    ANT_BIAS_E,
+    ANT_BIAS_SE,
+    ANT_BIAS_S,
+    ANT_BIAS_SW,
+    ANT_BIAS_W,
+    ANT_BIAS_NW
+} ant_bias_e;
 
 typedef union
 {
     uint32_t raw;
     struct
     {
+        // Ant params
         uint8_t hasAnt : 1;
-        uint8_t antState : 4;
-        uint8_t : 3;
+        uint8_t antState : 2;
+        ant_bias_e antBias : 4;
+        uint8_t : 1;
 
+        // Pheromone strength
         uint8_t pheromoneStrength : 8;
 
-        uint8_t hasFood : 1;
+        // Non-moving params
+        uint8_t isFood : 1;
         uint8_t : 7;
 
         uint8_t isWall : 1;
-        uint8_t : 7;
+        uint8_t isNest : 1;
+        uint8_t : 6;
     } parts;
 } aaCell;
+
+typedef struct
+{
+    int32_t x;
+    int32_t y;
+} gridPoint;
+
+typedef uint8_t dir_t;
 
 typedef struct
 {
     aaCell* grid;
     struct
     {
-        uint16_t width;
-        uint16_t height;
+        int32_t width;
+        int32_t height;
     } aaProps;
 } aaGrid;
 
@@ -52,32 +81,34 @@ uint8_t bitcount (uint32_t n)
     return count;
 }
 
-void processCell(aaGrid* gridp, uint16_t x, uint16_t y);
+void processCell(aaGrid* gridp, gridPoint pt);
 void setupGrid(aaGrid* gridp);
 void printGrid(aaGrid* gridp);
-aaCell* getCell(aaGrid* gridp, uint16_t x, uint16_t y);
-aaCell* getCellRelative(aaGrid* gridp, uint16_t x, uint16_t y, uint8_t dir);
-uint8_t getValidNeighbors(aaGrid* gridp, uint16_t x, uint16_t y);
-uint8_t chooseRandomDirection(uint8_t dirMask);
+aaCell* getCell(aaGrid* gridp, gridPoint pt);
+aaCell* getCellRelative(aaGrid* gridp, gridPoint pt, dir_t dir);
+dir_t getValidNeighbors(aaGrid* gridp, gridPoint pt);
+dir_t chooseRandomDirection(dir_t dirMask);
 void updateGrid(aaGrid* gridp);
+dir_t getDirBiasMask(ant_bias_e bias);
 
 int main(void)
 {
-    aaCell gridcells[400];
+    int gridWidth = 20, gridHeight = 20;
+    aaCell gridcells[gridWidth * gridHeight];
     aaGrid grid;
     grid.grid = gridcells;
-    grid.aaProps.width = 20;
-    grid.aaProps.height = 20;
+    grid.aaProps.width = gridWidth;
+    grid.aaProps.height = gridHeight;
 
     setupGrid(&grid);
 
-    getCell(&grid, 2, 2)->parts.hasAnt = 1;
+    getCell(&grid, {2,2})->parts.hasAnt = 1;
 
     while(true)
     {
         printGrid(&grid);
         updateGrid(&grid);
-        while(getc(stdin) != ' ');
+        getc(stdin);
     }
     return 0;
 }
@@ -85,80 +116,62 @@ int main(void)
 /**
     return a pointer to aaCell for the requested cell, or NULL if the indices are out of bounds
 */
-aaCell* getCell(aaGrid* gridp, uint16_t x, uint16_t y)
+aaCell* getCell(aaGrid* gridp, gridPoint pt)
 {
-    if(x > gridp->aaProps.width)
+    if(pt.x > gridp->aaProps.width || pt.x < 0 || pt.y > gridp->aaProps.height || pt.y < 0)
         return NULL;
-    if(y > gridp->aaProps.height)
-        return NULL;
-    return gridp->grid + ((y * gridp->aaProps.width) + x);
+    return gridp->grid + ((pt.y * gridp->aaProps.width) + pt.x);
 }
 
-bool isRelativeCellValid(aaGrid* gridp, uint16_t x, uint16_t y, uint8_t dir)
+bool isRelativeCellValid(aaGrid* gridp, gridPoint pt, dir_t dir)
 {
-    return (getCellRelative(gridp, x, y, dir) != NULL);
+    return (getCellRelative(gridp, pt, dir) != NULL);
 }
 
-aaCell* getCellRelative(aaGrid* gridp, uint16_t x, uint16_t y, uint8_t dir)
+aaCell* getCellRelative(aaGrid* gridp, gridPoint pt, dir_t dir)
 {
     uint8_t count = bitcount(dir);
     if(count == 0)
-        return getCell(gridp, x, y);
+        return getCell(gridp, pt);
     else if(count != 1)
-        return NULL;
-    if(x > gridp->aaProps.width)
-        return NULL;
-    if(y > gridp->aaProps.height)
         return NULL;
     switch(dir)
     {
     case CELL_N:
-        if(y > 0)
-            return gridp->grid + (((y - 1) * gridp->aaProps.width) + x);
-        else
-            return NULL;
+        pt.y -= 1;
+        return getCell(gridp, pt);
         break;
     case CELL_NE:
-        if(y > 0 && x < (gridp->aaProps.width - 1))
-            return gridp->grid + (((y - 1) * gridp->aaProps.width) + x + 1);
-        else
-            return NULL;
+        pt.x += 1;
+        pt.y -= 1;
+        return getCell(gridp, pt);
         break;
     case CELL_E:
-        if(x < (gridp->aaProps.width - 1))
-            return gridp->grid + ((y * gridp->aaProps.width) + x + 1);
-        else
-            return NULL;
+        pt.x += 1;
+        return getCell(gridp, pt);
         break;
     case CELL_SE:
-        if(x < (gridp->aaProps.width - 1) && y < (gridp->aaProps.height - 1))
-            return gridp->grid + (((y + 1) * gridp->aaProps.width) + x + 1);
-        else
-            return NULL;
+        pt.x += 1;
+        pt.y += 1;
+        return getCell(gridp, pt);
         break;
     case CELL_S:
-        if(y < (gridp->aaProps.height - 1))
-            return gridp->grid + (((y + 1) * gridp->aaProps.width) + x);
-        else
-            return NULL;
+        pt.y += 1;
+        return getCell(gridp, pt);
         break;
     case CELL_SW:
-        if(y < (gridp->aaProps.height - 1) && x > 0)
-            return gridp->grid + (((y + 1) * gridp->aaProps.width) + x - 1);
-        else
-            return NULL;
+        pt.x -= 1;
+        pt.y += 1;
+        return getCell(gridp, pt);
         break;
     case CELL_W:
-        if(x > 0)
-            return gridp->grid + ((y * gridp->aaProps.width) + x - 1);
-        else
-            return NULL;
+        pt.x -= 1;
+        return getCell(gridp, pt);
         break;
     case CELL_NW:
-        if(x > 0 && y > 0)
-            return gridp->grid + (((y - 1) * gridp->aaProps.width) + x - 1);
-        else
-            return NULL;
+        pt.x -= 1;
+        pt.y -= 1;
+        return getCell(gridp, pt);
         break;
     }
     return NULL;
@@ -173,7 +186,7 @@ void printGrid(aaGrid* gridp)
         {
             if(gridp->grid[i*gridp->aaProps.width + j].parts.isWall)
                 putc('#', stdout);
-            else if(gridp->grid[i*gridp->aaProps.width + j].parts.hasFood)
+            else if(gridp->grid[i*gridp->aaProps.width + j].parts.isFood)
                 putc('@', stdout);
             else if(gridp->grid[i*gridp->aaProps.width + j].parts.hasAnt)
                 putc('A', stdout);
@@ -185,62 +198,40 @@ void printGrid(aaGrid* gridp)
     }
 }
 
-uint8_t getValidNeighbors(aaGrid* gridp, uint16_t x, uint16_t y)
+dir_t getValidNeighbors(aaGrid* gridp, gridPoint pt)
 {
     uint8_t ret = 0;
     aaCell* testCell = NULL;
-    if(y > 0)
-    {
-        testCell = getCell(gridp, x, y - 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_N;
-    }
-    if(y > 0 && x > 0)
-    {
-        testCell = getCell(gridp, x - 1, y - 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_NW;
-    }
-    if(x > 0)
-    {
-        testCell = getCell(gridp, x - 1, y);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_W;
-    }
-    if(y < (gridp->aaProps.height-1) && x > 0)
-    {
-        testCell = getCell(gridp, x - 1, y + 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_SW;
-    }
-    if(y < (gridp->aaProps.height-1))
-    {
-        testCell = getCell(gridp, x, y + 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_S;
-    }
-    if(y < (gridp->aaProps.height-1) && x < (gridp->aaProps.width-1))
-    {
-        testCell = getCell(gridp, x + 1, y + 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_SE;
-    }
-    if(x < (gridp->aaProps.width-1))
-    {
-        testCell = getCell(gridp, x + 1, y);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_E;
-    }
-    if(y > 0 && x < (gridp->aaProps.width-1))
-    {
-        testCell = getCell(gridp, x + 1, y - 1);
-        if(!(testCell->parts.hasAnt || testCell->parts.isWall))
-            ret |= CELL_NE;
-    }
+
+    testCell = getCell(gridp, {pt.x, pt.y - 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_N;
+    testCell = getCell(gridp, {pt.x - 1, pt.y - 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_NW;
+    testCell = getCell(gridp, {pt.x - 1, pt.y});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_W;
+    testCell = getCell(gridp, {pt.x - 1, pt.y + 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_SW;
+    testCell = getCell(gridp, {pt.x, pt.y + 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_S;
+    testCell = getCell(gridp, {pt.x + 1, pt.y + 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_SE;
+    testCell = getCell(gridp, {pt.x + 1, pt.y});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_E;
+    testCell = getCell(gridp, {pt.x + 1, pt.y - 1});
+    if(!(testCell == NULL || testCell->parts.hasAnt || testCell->parts.isWall))
+        ret |= CELL_NE;
+
     return ret;
 }
 
-uint8_t chooseRandomDirection(uint8_t dirMask)
+dir_t chooseRandomDirection(dir_t dirMask)
 {
     if(dirMask == 0)
         return 0;
@@ -257,6 +248,19 @@ uint8_t chooseRandomDirection(uint8_t dirMask)
     return 1<<(sbit-1);
 }
 
+dir_t getDirBiasMask(ant_bias_e bias)
+{
+    if(bias == ANT_BIAS_NONE)
+        return 0;
+    // Create a buffer with 5 bits at the bottom
+    uint16_t tempMask = 0x1F;
+    // Rotate the buffer around an 8-bit block by (bias-1)
+    tempMask <<= (bias - 1);
+    tempMask |= ((tempMask & 0x3) << 8);
+    // shift, truncate, return
+    return (dir_t)(tempMask >>= 2);
+}
+
 void updateGrid(aaGrid* gridp)
 {
     uint16_t i,j;
@@ -264,23 +268,40 @@ void updateGrid(aaGrid* gridp)
     {
         for(j = 0; j < gridp->aaProps.width; j++)
         {
-            processCell(gridp, j, i);
+            processCell(gridp, {j, i});
+        }
+    }
+
+    // Post-process (clean up states)
+    for(i = 0; i < gridp->aaProps.height; i++)
+    {
+        for(j = 0; j < gridp->aaProps.width; j++)
+        {
+            getCell(gridp, {j, i})->parts.antState &= ~ANT_ACTED;
         }
     }
 }
 
-void processCell(aaGrid* gridp,  uint16_t x, uint16_t y)
+void processCell(aaGrid* gridp, gridPoint pt)
 {
-    aaCell* currentCell = getCell(gridp, x, y);
-    if(currentCell->parts.hasAnt)
+    aaCell* currentCell = getCell(gridp, pt);
+    if(currentCell->parts.hasAnt && !(currentCell->parts.antState & ANT_ACTED))
     {
-        uint8_t validNeighbors = getValidNeighbors(gridp, x, y);
+        uint8_t validNeighbors = getValidNeighbors(gridp, pt);
         uint8_t moveDir = chooseRandomDirection(validNeighbors);
-        aaCell* targetCell = getCellRelative(gridp, x, y, moveDir);
-        targetCell->parts.hasAnt = 1;
-        targetCell->parts.antState = currentCell->parts.antState;
-        currentCell->parts.antState = 0;
-        currentCell->parts.hasAnt = 0;
+        if(moveDir)
+        {
+            aaCell* targetCell = getCellRelative(gridp, pt, moveDir);
+            targetCell->parts.hasAnt = 1;
+            targetCell->parts.antState = currentCell->parts.antState | ANT_ACTED;
+            currentCell->parts.antState = 0;
+            currentCell->parts.hasAnt = 0;
+        }
+        else
+        {
+            currentCell->parts.antState |= ANT_ACTED;
+        }
+        printf("Valid neighbors: %02x chosen: %02x\n", validNeighbors, moveDir);
     }
 }
 
@@ -291,15 +312,19 @@ void setupGrid(aaGrid* gridp)
     {
         for(j = 0; j < gridp->aaProps.width; j++)
         {
-            gridp->grid[i*gridp->aaProps.width + j].raw = 0;
+            getCell(gridp, {j, i})->raw = 0;
         }
-        gridp->grid[i*gridp->aaProps.height].parts.isWall = 1;
-        gridp->grid[i*gridp->aaProps.height +gridp->aaProps.width - 1].parts.isWall = 1;
+    }
+
+    for(i = 0; i < gridp->aaProps.height; i++)
+    {
+        getCell(gridp, {0, i})->parts.isWall = 1;
+        getCell(gridp, {gridp->aaProps.width - 1, i})->parts.isWall = 1;
     }
 
     for(j = 0; j < gridp->aaProps.width; j++)
     {
-        gridp->grid[j].parts.isWall = 1;
-        gridp->grid[j+((gridp->aaProps.height-1)*gridp->aaProps.width)].parts.isWall = 1;
+        getCell(gridp, {j, 0})->parts.isWall = 1;
+        getCell(gridp, {j, gridp->aaProps.height - 1})->parts.isWall = 1;
     }
 }
